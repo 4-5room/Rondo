@@ -62,32 +62,21 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // デザイン (パレット = カードグリッド + テーマ = セグメント)
+            // デザイン
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("カラーパレット")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 170), spacing: 10)],
-                        spacing: 10
-                    ) {
+                LabeledContent("カラーパレット") {
+                    Picker("カラーパレット", selection: Binding(
+                        get: { current.paletteID },
+                        set: { current.paletteID = $0 }
+                    )) {
                         ForEach(ColorPalette.allPresets) { palette in
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    current.paletteID = palette.id
-                                }
-                            } label: {
-                                PaletteCard(
-                                    palette: palette,
-                                    isSelected: current.paletteID == palette.id
-                                )
-                            }
-                            .buttonStyle(.plain)
+                            Text(palette.displayName).tag(palette.id)
                         }
                     }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 200)
                 }
-                .padding(.vertical, 4)
 
                 LabeledContent("テーマ") {
                     Picker("テーマ", selection: Binding(
@@ -105,7 +94,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("デザイン", systemImage: "paintpalette.fill")
             } footer: {
-                Text("カードをクリックでパレット切替。4.5room / ショート動画 / ミュージックはダーク固定。")
+                Text("テーマ(ライト/ダーク)はシステム設定より優先。\n4.5room / ショート動画 / ミュージックはダーク固定。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

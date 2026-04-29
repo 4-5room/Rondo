@@ -131,7 +131,11 @@ struct TodayView: View {
             }
         }
         .sheet(isPresented: $showingAddTask) {
-            AddTaskSheet(initialDate: displayedDate)
+            // 今開いているタブの LifeArea (仕事/プライベート) を初期値に
+            AddTaskSheet(
+                initialDate: displayedDate,
+                initialLifeArea: selectedLifeArea
+            )
         }
     }
 

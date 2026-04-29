@@ -18,11 +18,12 @@ struct AddTaskSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let initialDate: Date
+    let initialLifeArea: LifeArea
 
     @State private var title: String = ""
     @State private var note: String = ""
     @State private var category: TaskCategory = .normal
-    @State private var lifeArea: LifeArea = .work
+    @State private var lifeArea: LifeArea
     @State private var tag: String = ""
     @State private var scheduledDate: Date
     @FocusState private var titleFocused: Bool
@@ -34,9 +35,11 @@ struct AddTaskSheet: View {
     @State private var isDropTargeted = false
     private let ocrService = OCRService()
 
-    init(initialDate: Date = .now) {
+    init(initialDate: Date = .now, initialLifeArea: LifeArea = .work) {
         self.initialDate = initialDate
+        self.initialLifeArea = initialLifeArea
         _scheduledDate = State(initialValue: initialDate.startOfDay)
+        _lifeArea = State(initialValue: initialLifeArea)
     }
 
     var body: some View {
