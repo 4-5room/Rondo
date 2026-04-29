@@ -203,17 +203,27 @@ struct StatsView: View {
     }
 
     private func summaryCard(title: String, value: String, systemImage: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label(title, systemImage: systemImage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.callout)
+                    .foregroundStyle(Color.accentColor)
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
             Text(value)
-                .font(.title3.weight(.semibold))
+                .font(.system(.title2, design: .rounded).weight(.semibold))
                 .monospacedDigit()
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.gray.opacity(0.12), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
     }
 
     private var lifeAreaSummarySection: some View {

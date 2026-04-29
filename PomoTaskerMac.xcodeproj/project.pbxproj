@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		53171B322F9D7FE2008561C4 /* PomoTaskerMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PomoTaskerMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		53171B322F9D7FE2008561C4 /* PomoTaskerMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = PomoTaskerMac.app; path = Rondo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -262,7 +262,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sly.PomoTaskerMac;
-				PRODUCT_NAME = "Rondo";
+				PRODUCT_NAME = Rondo;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -292,7 +292,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.sly.PomoTaskerMac;
-				PRODUCT_NAME = "Rondo";
+				PRODUCT_NAME = Rondo;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

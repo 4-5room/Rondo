@@ -59,6 +59,66 @@ iOS 版コード:
 
 ---
 
+## データ互換性 / バックアップ仕様
+
+iOS 版で出力した JSON バックアップを **Mac 版で復元できる** ことを設計上の必須要件とする。
+両アプリが同じ Snapshot スキーマを共有することで、ユーザーが iOS と Mac の間でデータ移行可能になる。
+
+### Snapshot スキーマ(iOS 版から流用)
+
+iOS 版 `BackupService.swift` の以下の DTO 構造をそのまま流用する:
+
+```
+Snapshot
+├── version: Int                        # 現状 1。互換性ポリシーは下記
+├── exportedAt: Date
+├── fingerprint: UUID?                  # 自端末書込み判定用
+├── tasks: [TaskItemDTO]
+├── sessions: [PomodoroSessionDTO]
+├── entries: [TimelineEntryDTO]
+├── goals: [MonthlyGoalDTO]
+└── settings: [UserSettingsDTO]
+```
+
+各 DTO のフィールド名・型・optional 性は **iOS 版と完全一致** させること。
+不一致があると `JSONDecoder` で復元失敗する。
+
+### バージョン互換性ポリシー
+
+- **`Snapshot.version` は iOS 版 / Mac 版で常に揃える**
+- スキーマ変更時のルール:
+  - **新規フィールド追加** → optional(`?` 型)で追加。旧 JSON は nil で読み込まれる
+  - **既存フィールド変更/削除** → 不可(version を上げて移行ロジックを書く)
+- 双方向互換を維持する原則:
+  - 旧 JSON → 新版アプリ: optional フィールドは nil で許容
+  - 新 JSON → 旧版アプリ: 新フィールドは無視される
+
+### 同期方法(Mac 版で対応する 3 種)
+
+| 方法 | 説明 | 優先度 |
+|---|---|---|
+| **A. 同期フォルダ** | iOS 版と同様、ユーザー指定の任意フォルダ(iCloud Drive / Dropbox 等)に `rondo-sync.json` を読み書き。設定画面でフォルダ選択 | 🔴 必須 |
+| **B. 手動 Import / Export** | `.fileImporter` / `NSOpenPanel` でファイル選択 → JSON 読み込み | 🔴 必須 |
+| **C. iCloud コンテナ共有** | iOS と同じ Bundle ID にして同コンテナを共有(自動同期) | 🟡 任意。OSS 公開時のハードル↑なので **初期版では非対応** |
+
+→ **同期は A + B で対応**。C は追加機能として後日検討。
+
+### Mac 版で実装する Import / Export UI
+
+- **メニュー**: ファイル → エクスポート / インポート
+- **キーボードショートカット**:
+  - `Cmd+Shift+E`: バックアップを書き出し
+  - `Cmd+Shift+I`: ファイルから取り込み
+- **ドラッグ&ドロップ**: メインウィンドウに JSON ファイルを D&D で取り込み
+
+### 復元時の安全策
+
+- インポート時は **既存データの自動バックアップを取ってからマージ**(誤上書き防止)
+- `version` 不一致時はダイアログで警告表示
+- マージ戦略は upsert(同じ ID は更新、無い ID は新規追加)— iOS 版と同じ
+
+---
+
 ## 想定ディレクトリ構成
 
 ```

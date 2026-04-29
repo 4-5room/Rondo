@@ -12,6 +12,7 @@ import SwiftData
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PomodoroTimerService.self) private var pomodoroService
+    @Environment(\.scenePhase) private var scenePhase
 
     @Query private var settingsList: [UserSettings]
 
@@ -75,6 +76,23 @@ struct ContentView: View {
                 modelContext.insert(UserSettings())
                 try? modelContext.save()
             }
+            // 起動時 sync: 同期フォルダ設定済みなら最新データを取り込み
+            if BackupService.shared.hasSyncFolder {
+                BackupService.shared.syncReadIfNewer(context: modelContext)
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // フォアグラウンド復帰: 取り込み (他端末で更新があれば反映)
+            // バックグラウンド遷移: 書き出し (自端末の変更を保存)
+            guard BackupService.shared.hasSyncFolder else { return }
+            switch newPhase {
+            case .active:
+                BackupService.shared.syncReadIfNewer(context: modelContext)
+            case .background:
+                BackupService.shared.syncWrite(context: modelContext)
+            default:
+                break
+            }
         }
         .sheet(isPresented: $showingPomodoro) {
             NavigationStack {
@@ -92,37 +110,40 @@ struct ContentView: View {
 
     @ViewBuilder
     private func detailView(for section: Section) -> some View {
-        switch section {
-        case .today:
-            NavigationStack {
-                TodayView(
-                    onStartPomodoro: { task in
-                        pendingPomodoroTask = task
-                        showingPomodoro = true
-                    },
-                    externalDate: $todayDate
-                )
-            }
-        case .timeline:
-            NavigationStack {
-                TimelineView()
-            }
-        case .stats:
-            NavigationStack {
-                StatsView(onNavigateToDate: { date in
-                    todayDate = date
-                    selection = .today
-                })
-            }
-        case .goals:
-            NavigationStack {
-                GoalsView()
-            }
-        case .settings:
-            NavigationStack {
-                SettingsView()
+        Group {
+            switch section {
+            case .today:
+                NavigationStack {
+                    TodayView(
+                        onStartPomodoro: { task in
+                            pendingPomodoroTask = task
+                            showingPomodoro = true
+                        },
+                        externalDate: $todayDate
+                    )
+                }
+            case .timeline:
+                NavigationStack {
+                    TimelineView()
+                }
+            case .stats:
+                NavigationStack {
+                    StatsView(onNavigateToDate: { date in
+                        todayDate = date
+                        selection = .today
+                    })
+                }
+            case .goals:
+                NavigationStack {
+                    GoalsView()
+                }
+            case .settings:
+                NavigationStack {
+                    SettingsView()
+                }
             }
         }
+        .paletteBackground()  // ← 全画面共通のパレット装飾背景 (4.5room オーロラ等)
     }
 }
 

@@ -19,6 +19,8 @@ struct SettingsView: View {
     @Query private var settings: [UserSettings]
 
     @State private var backupMessage: String?
+    @State private var syncFolderName: String? = BackupService.shared.syncFolderDisplayName
+    @State private var syncMessage: String?
 
     /// シングルトン UserSettings を取得 (なければ作成)。
     private var current: UserSettings {
@@ -60,26 +62,32 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // デザイン
+            // デザイン (パレット = カードグリッド + テーマ = セグメント)
             Section {
-                LabeledContent("カラーパレット") {
-                    Picker("カラーパレット", selection: Binding(
-                        get: { current.paletteID },
-                        set: { current.paletteID = $0 }
-                    )) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("カラーパレット")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 170), spacing: 10)],
+                        spacing: 10
+                    ) {
                         ForEach(ColorPalette.allPresets) { palette in
-                            HStack {
-                                Circle()
-                                    .fill(palette.accent)
-                                    .frame(width: 10, height: 10)
-                                Text(palette.displayName)
-                            }.tag(palette.id)
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    current.paletteID = palette.id
+                                }
+                            } label: {
+                                PaletteCard(
+                                    palette: palette,
+                                    isSelected: current.paletteID == palette.id
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 200)
                 }
+                .padding(.vertical, 4)
 
                 LabeledContent("テーマ") {
                     Picker("テーマ", selection: Binding(
@@ -97,7 +105,7 @@ struct SettingsView: View {
             } header: {
                 sectionHeader("デザイン", systemImage: "paintpalette.fill")
             } footer: {
-                Text("テーマ(ライト/ダーク)はシステム設定より優先されます。4.5roomパレットはダーク強制です。")
+                Text("カードをクリックでパレット切替。4.5room / ショート動画 / ミュージックはダーク固定。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -140,7 +148,68 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // バックアップ
+            // iOS版との同期 (iCloud Drive 共有フォルダ)
+            Section {
+                LabeledContent("同期フォルダ") {
+                    Text(syncFolderName ?? "未設定")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                LabeledContent(syncFolderName == nil ? "選択" : "変更") {
+                    Button {
+                        pickSyncFolder()
+                    } label: {
+                        Label(syncFolderName == nil ? "フォルダを選択" : "フォルダを変更",
+                              systemImage: "folder.badge.plus")
+                    }
+                }
+
+                if syncFolderName != nil {
+                    LabeledContent("操作") {
+                        HStack(spacing: 6) {
+                            Button {
+                                let ok = BackupService.shared.syncWrite(context: modelContext)
+                                syncMessage = ok ? "✓ 書き出しました" : "書き出しに失敗 (フォルダ再選択を)"
+                            } label: {
+                                Label("書き出し", systemImage: "icloud.and.arrow.up")
+                            }
+                            Button {
+                                let imported = BackupService.shared.syncReadIfNewer(context: modelContext, force: true)
+                                syncMessage = imported ? "✓ 取り込みました" : "取り込みなし (新しいデータがない or 同じデータ)"
+                            } label: {
+                                Label("取り込み", systemImage: "icloud.and.arrow.down")
+                            }
+                            Button(role: .destructive) {
+                                BackupService.shared.clearSyncFolder()
+                                syncFolderName = nil
+                                syncMessage = "同期フォルダを解除しました"
+                            } label: {
+                                Label("解除", systemImage: "xmark.circle")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+
+                if let syncMessage {
+                    Text(syncMessage)
+                        .font(.caption)
+                        .foregroundStyle(syncMessage.contains("失敗") ? .red : .secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } header: {
+                sectionHeader("iOS版と同期 (iCloud Drive)", systemImage: "icloud")
+            } footer: {
+                Text("iCloud Drive 上の **同じフォルダ** を iOS と Mac の両方で選択すると、起動時とフォアグラウンド復帰時に自動で書き出し/取り込みが行われます。\n削除は同期されません(追加・更新のみ)。設定 (テーマ・パレット等) は端末ごとに独立。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // バックアップ (手動)
             Section {
                 LabeledContent("エクスポート") {
                     Button {
@@ -165,9 +234,9 @@ struct SettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } header: {
-                sectionHeader("バックアップ", systemImage: "externaldrive")
+                sectionHeader("手動バックアップ", systemImage: "externaldrive")
             } footer: {
-                Text("全タスク・セッション・タイムライン・目標・設定を JSON で書き出し/読み込み。インポートは既存データを全置換します。")
+                Text("全データを JSON ファイルに書き出し/読み込み。インポートは既存データを全置換します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -277,6 +346,44 @@ struct SettingsView: View {
                 backupMessage = "✓ 復元しました: \(url.lastPathComponent)"
             } catch {
                 backupMessage = "復元失敗: \(error.localizedDescription)"
+            }
+        }
+        #endif
+    }
+
+    // MARK: - Sync folder picker
+
+    /// iCloud Drive 同期フォルダを選択。
+    /// 既存ファイルがあれば取り込み優先 (他端末のデータを守るため)。
+    private func pickSyncFolder() {
+        #if canImport(AppKit)
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "iCloud Drive 内の同期フォルダを選択 (iOS版と同じフォルダを指定)"
+        if panel.runModal() == .OK, let url = panel.url {
+            let accessOK = url.startAccessingSecurityScopedResource()
+            defer { if accessOK { url.stopAccessingSecurityScopedResource() } }
+            do {
+                try BackupService.shared.setSyncFolder(url: url)
+                syncFolderName = url.lastPathComponent
+
+                // 既存ファイルがあれば取り込み優先 (他端末データを守る)
+                if BackupService.shared.syncFileExists() {
+                    let imported = BackupService.shared.syncReadIfNewer(context: modelContext, force: true)
+                    syncMessage = imported
+                        ? "✓ 同期フォルダから取り込みました。次回バックグラウンド時に書き出します。"
+                        : "同期フォルダを設定しました (取り込みなし)"
+                } else {
+                    // 初回 (フォルダ空) は即書き出し
+                    let wrote = BackupService.shared.syncWrite(context: modelContext)
+                    syncMessage = wrote
+                        ? "✓ 同期フォルダを設定し、初回書き出しを完了しました"
+                        : "同期フォルダを設定しました (書き出しは次回)"
+                }
+            } catch {
+                syncMessage = "設定に失敗: \(error.localizedDescription)"
             }
         }
         #endif

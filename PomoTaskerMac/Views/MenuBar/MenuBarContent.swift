@@ -81,17 +81,50 @@ struct MenuBarContent: View {
 
     private var activeContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // フェーズバッジ + 残り時間
-            HStack {
-                Image(systemName: timer.currentPhase.systemImage)
-                    .foregroundStyle(phaseColor)
-                Text(phaseLabel)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(phaseColor)
+            // 円形プログレス + 残り時間 + フェーズ (リッチ表示)
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .stroke(phaseColor.opacity(0.18), lineWidth: 4)
+                        .frame(width: 60, height: 60)
+                    Circle()
+                        .trim(from: 0, to: timer.mode == .countUp ? 1 : timer.progress)
+                        .stroke(
+                            phaseColor,
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 60, height: 60)
+                        .shadow(color: phaseColor.opacity(0.4), radius: 4)
+                        .animation(.linear(duration: 0.25), value: timer.progress)
+
+                    Image(systemName: timer.currentPhase.systemImage)
+                        .foregroundStyle(phaseColor)
+                        .font(.title3.weight(.semibold))
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(phaseLabel)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Text(timer.mode == .countUp ? timer.formattedElapsed : timer.formattedRemaining)
+                        .font(.system(.title2, design: .rounded).weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
+                        .contentTransition(.numericText())
+                }
+
                 Spacer()
-                Text(timer.mode == .countUp ? timer.formattedElapsed : timer.formattedRemaining)
-                    .font(.system(.title3, design: .monospaced).weight(.semibold))
             }
+            .padding(10)
+            .background(
+                LinearGradient(
+                    colors: [phaseColor.opacity(0.12), phaseColor.opacity(0.02)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
 
             // タスク名
             if let task = timer.currentTask {

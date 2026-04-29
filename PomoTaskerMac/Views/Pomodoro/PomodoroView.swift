@@ -131,14 +131,40 @@ struct PomodoroView: View {
 
     private func timerDisplay(size: CGFloat) -> some View {
         ZStack {
+            // 背景グロー (大きく拡散、走行中のみ)
             Circle()
-                .stroke(accent.opacity(0.15), lineWidth: 14)
+                .fill(accent)
+                .opacity(timer.state == .idle ? 0 : 0.18)
+                .blur(radius: 40)
+                .scaleEffect(0.85)
+                .animation(.easeInOut(duration: 0.6), value: timer.state)
 
+            // 内側うっすらリング (背景)
+            Circle()
+                .stroke(accent.opacity(0.12), lineWidth: 14)
+
+            // 進捗リング (グロー付き)
             Circle()
                 .trim(from: 0, to: timer.state == .idle ? 0 : timer.progress)
-                .stroke(accent, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                .stroke(
+                    accent,
+                    style: StrokeStyle(lineWidth: 14, lineCap: .round)
+                )
                 .rotationEffect(.degrees(-90))
+                .shadow(color: accent.opacity(0.55), radius: 10, y: 0)
+                .shadow(color: accent.opacity(0.3), radius: 20, y: 0)
                 .animation(.linear(duration: 0.25), value: timer.progress)
+
+            // 走行中のドット (進捗端の発光)
+            if timer.state == .running, timer.progress > 0 {
+                Circle()
+                    .fill(accent)
+                    .frame(width: 18, height: 18)
+                    .shadow(color: accent, radius: 8)
+                    .offset(y: -size / 2)
+                    .rotationEffect(.degrees(timer.progress * 360))
+                    .animation(.linear(duration: 0.25), value: timer.progress)
+            }
 
             VStack(spacing: 4) {
                 Text(timerMainText)
