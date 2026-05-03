@@ -88,7 +88,12 @@ final class OCRService {
         let (mid, original, strongRes) = try await (midObs, originalObs, strongObs)
         let merged = Self.mergeObservations(primary: mid, others: [original, strongRes])
 
-        return Self.classifyAndBuild(observations: merged, checkboxOnly: checkboxOnly)
+        // ペン色推定には前処理前 (元画像) を渡す。前処理で色情報が失われるため。
+        return Self.classifyAndBuild(
+            observations: merged,
+            colorCGImage: cgImage,
+            checkboxOnly: checkboxOnly
+        )
     }
 
     /// 複数画像をシリアルに処理。
@@ -235,6 +240,7 @@ final class OCRService {
 
     private static func classifyAndBuild(
         observations: [VNRecognizedTextObservation],
+        colorCGImage: CGImage,
         checkboxOnly: Bool
     ) -> [RecognizedLine] {
         let sorted = observations.sorted { $0.boundingBox.midY > $1.boundingBox.midY }
@@ -255,8 +261,12 @@ final class OCRService {
             let candidates = obs.topCandidates(3).map { $0.string }
             guard !candidates.isEmpty else { continue }
 
-            // ヘッダー判定
-            if let headerText = candidates.compactMap({ extractBulletHeader(from: $0) }).first {
+            // ヘッダー判定 (行末コロン → 中黒の順に試す)
+            // extractColonHeader を先に試すことで「YouTube:」のような英字+コロンを優先判定。
+            // 時刻表記 (12:30 等) は内部「:」を含むため除外される。
+            if let headerText = candidates.compactMap({
+                extractColonHeader(from: $0) ?? extractBulletHeader(from: $0)
+            }).first {
                 headerHits.append(HeaderHit(text: headerText, boundingBox: obs.boundingBox))
                 continue
             }
@@ -295,14 +305,155 @@ final class OCRService {
         var results: [RecognizedLine] = []
         for hit in taskHits {
             let groupName = resolveGroupName(for: hit.boundingBox, columns: columns)
+            // ペン色 (赤=緊急 / 青=重要 / 緑=特殊 / 黒=通常) からカテゴリ推定
+            let category = estimateCategory(cgImage: colorCGImage, boundingBox: hit.boundingBox)
             results.append(RecognizedLine(
                 text: hit.text,
-                category: nil,
+                category: category,
                 groupName: groupName,
                 rawCandidates: hit.rawCandidates
             ))
         }
         return results
+    }
+
+    // MARK: - Color-based category estimation (iOS版から移植)
+
+    /// boundingBox (Vision の正規化座標、原点左下) の領域からペン色を推定して
+    /// TaskCategory を返す。前景ピクセル (彩度高 or 明度低) の平均 HSB で判定。
+    static func estimateCategory(cgImage: CGImage, boundingBox: CGRect) -> TaskCategory? {
+        let w = cgImage.width
+        let h = cgImage.height
+
+        let rectX = Int(boundingBox.minX * CGFloat(w))
+        let rectW = Int(boundingBox.width * CGFloat(w))
+        let rectH = Int(boundingBox.height * CGFloat(h))
+        let rectY = Int((1.0 - boundingBox.maxY) * CGFloat(h))
+
+        let clampedX = max(0, min(w - 1, rectX))
+        let clampedY = max(0, min(h - 1, rectY))
+        let clampedW = max(1, min(w - clampedX, rectW))
+        let clampedH = max(1, min(h - clampedY, rectH))
+
+        guard let sampled = sampleForegroundHSB(
+            cgImage: cgImage,
+            x: clampedX, y: clampedY, width: clampedW, height: clampedH
+        ) else { return nil }
+
+        return classifyCategory(hue: sampled.h, saturation: sampled.s, brightness: sampled.b)
+    }
+
+    /// 指定領域からサブサンプリングで前景ピクセルの平均 HSB を算出。
+    /// 前景判定: 彩度 > 0.18 もしくは 明度 < 0.55 (= 白背景より暗い)
+    /// 該当ピクセルが 1% 未満なら nil (= 文字が薄すぎて判定不能)
+    private static func sampleForegroundHSB(
+        cgImage: CGImage, x: Int, y: Int, width: Int, height: Int
+    ) -> (h: CGFloat, s: CGFloat, b: CGFloat)? {
+        let totalPixels = width * height
+        let targetPixels = 20_000
+        let ratio = max(1.0, Double(totalPixels) / Double(targetPixels))
+        let sampleStep = max(1, Int(ratio.squareRoot().rounded(.up)))
+
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        var buffer = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+
+        guard let context = CGContext(
+            data: &buffer,
+            width: width, height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else { return nil }
+
+        let sourceRect = CGRect(x: x, y: y, width: width, height: height)
+        guard let cropped = cgImage.cropping(to: sourceRect) else { return nil }
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var sumVectorX: CGFloat = 0  // hue 円周平均の cos 成分
+        var sumVectorY: CGFloat = 0  // sin 成分
+        var sumS: CGFloat = 0
+        var sumB: CGFloat = 0
+        var fgCount = 0
+        var totalCount = 0
+
+        var py = 0
+        while py < height {
+            var px = 0
+            while px < width {
+                let offset = (py * bytesPerRow) + (px * bytesPerPixel)
+                let r = CGFloat(buffer[offset]) / 255.0
+                let g = CGFloat(buffer[offset + 1]) / 255.0
+                let b = CGFloat(buffer[offset + 2]) / 255.0
+
+                let hsb = rgbToHSB(r: r, g: g, b: b)
+                totalCount += 1
+
+                if hsb.s > 0.18 || hsb.b < 0.55 {
+                    fgCount += 1
+                    let angle = hsb.h * 2 * .pi
+                    sumVectorX += cos(angle) * hsb.s  // 彩度で重み付け
+                    sumVectorY += sin(angle) * hsb.s
+                    sumS += hsb.s
+                    sumB += hsb.b
+                }
+                px += sampleStep
+            }
+            py += sampleStep
+        }
+
+        guard totalCount > 0, fgCount >= max(5, totalCount / 100) else {
+            return nil
+        }
+
+        let avgS = sumS / CGFloat(fgCount)
+        let avgB = sumB / CGFloat(fgCount)
+        let avgAngle = atan2(sumVectorY / CGFloat(fgCount), sumVectorX / CGFloat(fgCount))
+        var avgH = avgAngle / (2 * .pi)
+        if avgH < 0 { avgH += 1 }
+
+        return (avgH, avgS, avgB)
+    }
+
+    /// HSB → カテゴリ分類:
+    /// - 彩度 < 0.20 → 通常 (黒/グレー/鉛筆)
+    /// - 赤 (0〜20° / 340〜360°) → 緊急
+    /// - 青 (200〜260°) → 重要
+    /// - 緑/黄 (40〜160°) → 特殊
+    /// - その他 (紫/ピンク/シアン) → 判定困難 → nil
+    private static func classifyCategory(hue h: CGFloat, saturation s: CGFloat, brightness b: CGFloat) -> TaskCategory? {
+        if s < 0.20 { return .normal }
+
+        let deg = h * 360.0
+        if deg < 20 || deg >= 340 { return .urgent }
+        if deg >= 200 && deg < 260 { return .important }
+        if deg >= 40 && deg < 160 { return .special }
+        return nil
+    }
+
+    /// RGB → HSB 変換
+    private static func rgbToHSB(r: CGFloat, g: CGFloat, b: CGFloat) -> (h: CGFloat, s: CGFloat, b: CGFloat) {
+        let maxV = max(r, g, b)
+        let minV = min(r, g, b)
+        let delta = maxV - minV
+        var h: CGFloat = 0
+        if delta > 0 {
+            if maxV == r {
+                h = ((g - b) / delta).truncatingRemainder(dividingBy: 6)
+            } else if maxV == g {
+                h = (b - r) / delta + 2
+            } else {
+                h = (r - g) / delta + 4
+            }
+            h /= 6
+            if h < 0 { h += 1 }
+        }
+        let s = maxV == 0 ? 0 : delta / maxV
+        return (h, s, maxV)
     }
 
     // MARK: - Image preprocessing
@@ -471,7 +622,38 @@ final class OCRService {
         "\u{30FB}", "\u{00B7}", "\u{2022}", "\u{25E6}", "\u{2219}"
     ]
 
-    /// 「・ルーティン」型のグループヘッダーを抽出。
+    /// 行末が「:」または「:」で終わる行をヘッダー扱いで抽出する。
+    /// 例: `YouTube:` → "YouTube", `ルーティン:` → "ルーティン"
+    /// 時刻表記 (12:30 等) は内部に「:」を含むため除外。
+    /// チェックボックスを含む行も除外 (タスク行の可能性が高い)。
+    static func extractColonHeader(from line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let last = trimmed.last
+        let isHalfColon = last == ":"
+        let isFullColon = last == "\u{FF1A}"
+        guard isHalfColon || isFullColon else { return nil }
+
+        // チェックボックスを含む行はタスク行とみなす
+        if trimmed.contains(where: { checkboxChars.contains($0) }) { return nil }
+
+        let body = String(trimmed.dropLast()).trimmingCharacters(in: .whitespaces)
+        guard body.count >= 1, body.count <= 15 else { return nil }
+        // 内部に「:」が残っていれば時刻系の可能性 → 除外
+        if body.contains(":") || body.contains("\u{FF1A}") { return nil }
+        // 文字種は緩く: 文字 / 数字 / スペースのみ許容
+        for ch in body {
+            guard ch.isLetter || ch.isNumber || ch.isWhitespace else { return nil }
+        }
+        return body
+    }
+
+    /// 「・ルーティン」「・YouTube」「・GAS」のようなグループヘッダーを抽出。
+    /// 条件:
+    /// - 先頭が中黒系の記号
+    /// - 直後にスペースがない (手書き「□ X」誤認識との区別)
+    /// - 残り 2〜10 文字
+    /// - 全文字が「漢字 / ひらがな / カタカナ / 英字 / 数字」のいずれか
     static func extractBulletHeader(from line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = trimmed.first, bulletHeaderChars.contains(first) else { return nil }
@@ -480,9 +662,9 @@ final class OCRService {
         if trimmed[afterBulletIdx].isWhitespace { return nil }
 
         let rest = String(trimmed[afterBulletIdx...]).trimmingCharacters(in: .whitespaces)
-        guard rest.count >= 2, rest.count <= 6 else { return nil }
+        guard rest.count >= 2, rest.count <= 10 else { return nil }
         for ch in rest {
-            guard ch.isJapaneseCategoryChar else { return nil }
+            guard ch.isHeaderAllowedChar else { return nil }
         }
         return rest
     }
@@ -544,6 +726,18 @@ private extension Character {
         if (0x30A0...0x30FF).contains(v) { return true }   // カタカナ
         if (0x4E00...0x9FFF).contains(v) { return true }   // CJK統合漢字
         if (0x3400...0x4DBF).contains(v) { return true }   // CJK統合漢字拡張A
+        return false
+    }
+
+    /// ヘッダー名として許容する文字種 (日本語 + ASCII 英字 + 数字)。
+    /// 記号・スペース・スラッシュ等は false → タスク行とみなす。
+    /// 「YouTube」「GAS」「MASTA」「GAS2」等を拾えるよう拡張。
+    var isHeaderAllowedChar: Bool {
+        if isJapaneseCategoryChar { return true }
+        guard let scalar = unicodeScalars.first else { return false }
+        let v = scalar.value
+        if (0x0041...0x005A).contains(v) || (0x0061...0x007A).contains(v) { return true } // A-Z, a-z
+        if (0x0030...0x0039).contains(v) { return true } // 0-9
         return false
     }
 }
