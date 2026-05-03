@@ -158,7 +158,8 @@ struct AddTaskSheet: View {
                 set: { if !$0 { ocrRecognized = nil } }
             )) {
                 if let recognized = ocrRecognized {
-                    OCRReviewSheet(recognized: recognized)
+                    // 現在の AddTaskSheet で選んでいる生活領域を OCRReview にも引き継ぐ
+                    OCRReviewSheet(recognized: recognized, initialLifeArea: lifeArea)
                         .onDisappear {
                             ocrRecognized = nil
                             dismiss()

@@ -20,6 +20,7 @@ struct OCRReviewSheet: View {
 
     @State var candidates: [CandidateRow]
     @State private var defaultCategory: TaskCategory = .normal
+    @State private var defaultLifeArea: LifeArea
     @State private var showRawCandidates: Bool = false
     @State private var isAIRunning: Bool = false
     @State private var didApplyDictionary: Bool = false
@@ -44,16 +45,17 @@ struct OCRReviewSheet: View {
         return counter.sorted { $0.value > $1.value }.map { $0.key }
     }
 
-    init(lines: [String]) {
+    init(lines: [String], initialLifeArea: LifeArea = .work) {
         _candidates = State(initialValue: lines.map {
             CandidateRow(
                 text: $0, originalRaw: $0,
                 category: nil, groupName: nil, isSelected: !$0.isEmpty
             )
         })
+        _defaultLifeArea = State(initialValue: initialLifeArea)
     }
 
-    init(recognized: [OCRService.RecognizedLine]) {
+    init(recognized: [OCRService.RecognizedLine], initialLifeArea: LifeArea = .work) {
         _candidates = State(initialValue: recognized.map {
             CandidateRow(
                 text: $0.text,
@@ -64,6 +66,7 @@ struct OCRReviewSheet: View {
                 rawCandidates: $0.rawCandidates
             )
         })
+        _defaultLifeArea = State(initialValue: initialLifeArea)
     }
 
     private var selectedCount: Int {
@@ -78,13 +81,23 @@ struct OCRReviewSheet: View {
                         CategorySelector(selection: $defaultCategory)
                             .frame(maxWidth: 320)
                     }
+                    LabeledContent("生活領域") {
+                        Picker("生活領域", selection: $defaultLifeArea) {
+                            ForEach(LifeArea.allCases) { area in
+                                Label(area.label, systemImage: area.systemImage).tag(area)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 220)
+                    }
                     Toggle(isOn: $showRawCandidates) {
                         Label("生認識結果を表示", systemImage: "text.magnifyingglass")
                     }
                 } header: {
                     sectionHeader("一括設定", systemImage: "slider.horizontal.3")
                 } footer: {
-                    Text("各行で個別に分類を上書き可能。「生認識結果」は誤認識の原因特定用。")
+                    Text("分類・生活領域は全行に適用 (各行で個別の分類上書きも可能)。「生認識結果」は誤認識の原因特定用。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -298,6 +311,7 @@ struct OCRReviewSheet: View {
                 category: row.category ?? defaultCategory,
                 createdAt: now.addingTimeInterval(Double(order) * 0.001),
                 sortOrder: order,
+                lifeArea: defaultLifeArea,
                 tag: tagValue
             )
             modelContext.insert(task)
