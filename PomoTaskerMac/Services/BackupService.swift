@@ -51,6 +51,8 @@ final class BackupService {
         var entries: [TimelineEntryDTO] = []
         var goals: [MonthlyGoalDTO] = []
         var settings: [UserSettingsDTO] = []
+        /// OCR 補正履歴 (新規 optional、旧 JSON は空配列で読込)
+        var corrections: [OCRCorrectionDTO] = []
     }
 
     struct TaskItemDTO: Codable {
@@ -120,6 +122,17 @@ final class BackupService {
         var calendarSyncEnabled: Bool? = nil
         var calendarSourceRaw: String? = nil
         var googleCalendarICSURL: String? = nil
+    }
+
+    /// OCR 補正履歴の DTO (iOS 版と完全一致、normalizedRaw を一意キーとして扱う)。
+    struct OCRCorrectionDTO: Codable {
+        var id: UUID
+        var normalizedRaw: String
+        var rawText: String
+        var correctedText: String
+        var occurrences: Int
+        var createdAt: Date
+        var lastUsedAt: Date
     }
 
     // MARK: - Encoders
@@ -196,6 +209,15 @@ final class BackupService {
             )
         }
 
+        let corrections = (try? context.fetch(FetchDescriptor<OCRCorrection>())) ?? []
+        snapshot.corrections = corrections.map { c in
+            OCRCorrectionDTO(
+                id: c.id, normalizedRaw: c.normalizedRaw, rawText: c.rawText,
+                correctedText: c.correctedText, occurrences: c.occurrences,
+                createdAt: c.createdAt, lastUsedAt: c.lastUsedAt
+            )
+        }
+
         return snapshot
     }
 
@@ -215,6 +237,7 @@ final class BackupService {
         try? context.delete(model: TimelineEntry.self)
         try? context.delete(model: MonthlyGoal.self)
         try? context.delete(model: UserSettings.self)
+        try? context.delete(model: OCRCorrection.self)
 
         var taskMap: [UUID: TaskItem] = [:]
         for dto in snapshot.tasks {
@@ -279,6 +302,16 @@ final class BackupService {
                 menuBarEnabled: dto.menuBarEnabled ?? true
             )
             context.insert(s)
+        }
+
+        // OCR 補正履歴を復元
+        for dto in snapshot.corrections {
+            let c = OCRCorrection(
+                id: dto.id, normalizedRaw: dto.normalizedRaw, rawText: dto.rawText,
+                correctedText: dto.correctedText, occurrences: dto.occurrences,
+                createdAt: dto.createdAt, lastUsedAt: dto.lastUsedAt
+            )
+            context.insert(c)
         }
 
         do {
@@ -557,6 +590,48 @@ final class BackupService {
         }
 
         // UserSettings は同期対象外 (Mac/iOS 互換性問題のため)
+
+        // OCRCorrection: upsert
+        // ID 一致なら更新、id 不一致でも normalizedRaw 一致ならマージ (occurrences 加算)、
+        // どちらも無ければ新規挿入。iOS と Mac で別 id 採番でも統合される。
+        let existingCorrections = (try? context.fetch(FetchDescriptor<OCRCorrection>())) ?? []
+        var correctionByID: [UUID: OCRCorrection] = [:]
+        var correctionByNorm: [String: OCRCorrection] = [:]
+        for c in existingCorrections {
+            correctionByID[c.id] = c
+            correctionByNorm[c.normalizedRaw] = c
+        }
+        for dto in snap.corrections {
+            if let existing = correctionByID[dto.id] {
+                existing.normalizedRaw = dto.normalizedRaw
+                existing.rawText = dto.rawText
+                existing.correctedText = dto.correctedText
+                existing.occurrences = max(existing.occurrences, dto.occurrences)
+                if dto.lastUsedAt > existing.lastUsedAt {
+                    existing.lastUsedAt = dto.lastUsedAt
+                }
+            } else if let merged = correctionByNorm[dto.normalizedRaw] {
+                // 同じ正規化キーが既存にある: 占有数加算 + 最新採用
+                merged.occurrences += dto.occurrences
+                if dto.lastUsedAt > merged.lastUsedAt {
+                    merged.lastUsedAt = dto.lastUsedAt
+                    merged.correctedText = dto.correctedText
+                }
+            } else {
+                let new = OCRCorrection(
+                    id: dto.id,
+                    normalizedRaw: dto.normalizedRaw,
+                    rawText: dto.rawText,
+                    correctedText: dto.correctedText,
+                    occurrences: dto.occurrences,
+                    createdAt: dto.createdAt,
+                    lastUsedAt: dto.lastUsedAt
+                )
+                context.insert(new)
+                correctionByID[new.id] = new
+                correctionByNorm[new.normalizedRaw] = new
+            }
+        }
 
         try context.save()
     }

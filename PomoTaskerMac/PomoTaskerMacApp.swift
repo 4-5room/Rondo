@@ -21,6 +21,7 @@ struct PomoTaskerMacApp: App {
             TimelineEntry.self,
             MonthlyGoal.self,
             UserSettings.self,
+            OCRCorrection.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

@@ -16,14 +16,19 @@ struct OCRReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @Query private var allTasks: [TaskItem]
+    @Query private var ocrCorrections: [OCRCorrection]
 
     @State var candidates: [CandidateRow]
     @State private var defaultCategory: TaskCategory = .normal
     @State private var showRawCandidates: Bool = false
+    @State private var isAIRunning: Bool = false
+    @State private var didApplyDictionary: Bool = false
 
     struct CandidateRow: Identifiable {
         let id = UUID()
         var text: String
+        /// OCR の生 raw (補正前)。学習 (OCRCorrection upsert) 用。
+        var originalRaw: String
         var category: TaskCategory?
         var groupName: String?
         var isSelected: Bool
@@ -41,7 +46,10 @@ struct OCRReviewSheet: View {
 
     init(lines: [String]) {
         _candidates = State(initialValue: lines.map {
-            CandidateRow(text: $0, category: nil, groupName: nil, isSelected: !$0.isEmpty)
+            CandidateRow(
+                text: $0, originalRaw: $0,
+                category: nil, groupName: nil, isSelected: !$0.isEmpty
+            )
         })
     }
 
@@ -49,6 +57,7 @@ struct OCRReviewSheet: View {
         _candidates = State(initialValue: recognized.map {
             CandidateRow(
                 text: $0.text,
+                originalRaw: $0.text,
                 category: $0.category,
                 groupName: $0.groupName,
                 isSelected: !$0.text.isEmpty,
@@ -204,7 +213,64 @@ struct OCRReviewSheet: View {
                 }
             }
             .frame(minWidth: 580, minHeight: 600)
+            .task {
+                // 起動時に1回: 辞書補正 → AI 補正 (順次)
+                guard !didApplyDictionary else { return }
+                didApplyDictionary = true
+                applyDictionaryCorrection()
+                await applyIntelligentCorrection()
+            }
+            .overlay(alignment: .top) {
+                if isAIRunning {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("AI 補正中…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 6)
+                }
+            }
         }
+    }
+
+    // MARK: - OCR Correction Pipeline
+
+    /// 起動時の同期辞書補正 (補正履歴 + 既存タスクタイトル)。
+    private func applyDictionaryCorrection() {
+        let knownTitles = OCRDictionary.knownTitles(from: allTasks)
+        for i in candidates.indices {
+            let raw = candidates[i].text
+            let corrected = OCRDictionary.correct(
+                raw,
+                corrections: ocrCorrections,
+                knownTitles: knownTitles
+            )
+            if corrected != raw {
+                candidates[i].text = corrected
+            }
+        }
+    }
+
+    /// Apple Intelligence 補正 (対応端末のみ、非同期)。
+    private func applyIntelligentCorrection() async {
+        guard IntelligentOCRCorrector.isAvailable else { return }
+        isAIRunning = true
+        let rawTexts = candidates.map { $0.text }
+        let knownTitles = OCRDictionary.knownTitles(from: allTasks)
+        let corrected = await IntelligentOCRCorrector.correct(
+            rawTexts: rawTexts,
+            knownTitles: knownTitles
+        )
+        if corrected.count == candidates.count {
+            for i in candidates.indices where corrected[i] != candidates[i].text {
+                candidates[i].text = corrected[i]
+            }
+        }
+        isAIRunning = false
     }
 
     private func save() {
@@ -214,6 +280,15 @@ struct OCRReviewSheet: View {
         for row in candidates {
             let trimmed = row.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard row.isSelected, !trimmed.isEmpty else { continue }
+
+            // 学習: raw と修正後が異なれば OCRCorrection を upsert (次回以降の自動補正用)
+            OCRDictionary.upsertCorrection(
+                rawText: row.originalRaw,
+                correctedText: trimmed,
+                in: ocrCorrections,
+                insert: { modelContext.insert($0) }
+            )
+
             let tagValue: String? = {
                 guard let g = row.groupName?.trimmingCharacters(in: .whitespaces), !g.isEmpty else { return nil }
                 return TagMatcher.bestMatch(for: g, in: registeredTags) ?? g
