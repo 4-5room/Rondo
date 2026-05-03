@@ -17,10 +17,12 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
 
     @Query private var settings: [UserSettings]
+    @Query private var allTasks: [TaskItem]
 
     @State private var backupMessage: String?
     @State private var syncFolderName: String? = BackupService.shared.syncFolderDisplayName
     @State private var syncMessage: String?
+    @State private var tagToDelete: (tag: String, count: Int)?
 
     /// シングルトン UserSettings を取得 (なければ作成)。
     private var current: UserSettings {
@@ -198,6 +200,42 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // タグ管理 (削除のみ。一覧 + 件数表示)
+            Section {
+                let counts = TagSource.tagCounts(from: allTasks)
+                if counts.isEmpty {
+                    Text("登録済みタグはありません")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(counts, id: \.tag) { entry in
+                        HStack(spacing: 8) {
+                            Image(systemName: "tag.fill")
+                                .foregroundStyle(Color.accentColor)
+                                .font(.caption)
+                            Text(entry.tag)
+                                .font(.subheadline)
+                            Spacer()
+                            Text("\(entry.count) 件")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Button(role: .destructive) {
+                                tagToDelete = entry
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            } header: {
+                sectionHeader("タグ管理", systemImage: "tag")
+            } footer: {
+                Text("削除すると、そのタグを使う全タスクから外されます (タスク自体は残ります)。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             // バックアップ (手動)
             Section {
                 LabeledContent("エクスポート") {
@@ -268,6 +306,33 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .navigationTitle("Settings")
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .alert(
+            "タグ「\(tagToDelete?.tag ?? "")」を削除",
+            isPresented: Binding(
+                get: { tagToDelete != nil },
+                set: { if !$0 { tagToDelete = nil } }
+            )
+        ) {
+            Button("キャンセル", role: .cancel) {}
+            Button("削除", role: .destructive) {
+                if let entry = tagToDelete {
+                    deleteTag(entry.tag)
+                }
+            }
+        } message: {
+            if let entry = tagToDelete {
+                Text("\(entry.count) 件のタスクから「\(entry.tag)」を外します。タスク自体は残ります。")
+            }
+        }
+    }
+
+    /// 該当タグを使う全タスクの tag を nil に設定。
+    private func deleteTag(_ tag: String) {
+        for task in allTasks where task.tag == tag {
+            task.tag = nil
+        }
+        try? modelContext.save()
+        tagToDelete = nil
     }
 
     /// セクションヘッダー (アイコン + タイトル) の共通スタイル。

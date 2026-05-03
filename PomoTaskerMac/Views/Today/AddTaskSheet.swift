@@ -17,6 +17,9 @@ struct AddTaskSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
+    /// タグサジェスト用に既存タスクを取得 (TagInputField に渡す)
+    @Query private var existingTasksForTags: [TaskItem]
+
     let initialDate: Date
     let initialLifeArea: LifeArea
 
@@ -78,9 +81,11 @@ struct AddTaskSheet: View {
                     }
 
                     LabeledContent("タグ (任意)") {
-                        TextField("例: 仕事メモ", text: $tag)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 220)
+                        TagInputField(
+                            tag: $tag,
+                            existingTags: TagSource.uniqueTags(from: existingTasksForTags)
+                        )
+                        .frame(maxWidth: 320)
                     }
                 } header: {
                     sectionHeader("分類とタグ", systemImage: "tag.fill")
